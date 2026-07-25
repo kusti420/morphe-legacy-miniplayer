@@ -64,7 +64,7 @@ public final class LegacyMiniplayerDismissOverlay {
             overlayX = onScreen[0] - crScreen[0];
             overlayY = onScreen[1] - crScreen[1];
             final SurfaceView fsv = sv;
-            Logger.printException(() -> "LEGACY snapshot sv=" + fsv.getClass().getSimpleName()
+            Logger.printDebug(() -> "Legacy snapshot sv=" + fsv.getClass().getSimpleName()
                     + " size=" + overlayW + "x" + overlayH
                     + " screen=[" + onScreen[0] + "," + onScreen[1] + "]"
                     + " overlayXY=[" + overlayX + "," + overlayY + "]");

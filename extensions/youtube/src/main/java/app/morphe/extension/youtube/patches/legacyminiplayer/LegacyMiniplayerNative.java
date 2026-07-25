@@ -62,10 +62,10 @@ public final class LegacyMiniplayerNative {
                 owvMaximize = null;
             }
             resolved = true;
-            Logger.printException(() -> "LEGACY native bridge resolved oxb=" + oxb.getClass().getName());
+            Logger.printDebug(() -> "Legacy native bridge resolved oxb=" + oxb.getClass().getName());
             return true;
         } catch (Throwable t) {
-            Logger.printException(() -> "LEGACY ensureResolved failure", t);
+            Logger.printException(() -> "Legacy miniplayer native resolve failure", t);
             return false;
         }
     }

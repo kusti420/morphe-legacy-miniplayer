@@ -2,8 +2,10 @@
 /device-*.png
 /frame*.png
 /glass*.png
+/t-*.png
 /*-crop.png
 /miniplayer_*_onDark.png
+/scr.mp4
 
 # Built patch bundles / APKs
 *.mpp
