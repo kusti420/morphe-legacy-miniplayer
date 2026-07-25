@@ -1,0 +1,14 @@
+# Device screenshots & scratch analysis images (root-level captures)
+/device-*.png
+/frame*.png
+/glass*.png
+/*-crop.png
+/miniplayer_*_onDark.png
+
+# Built patch bundles / APKs
+*.mpp
+*.apk
+
+# OS / editor cruft
+.DS_Store
+*.swp

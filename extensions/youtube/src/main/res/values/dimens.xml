@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Legacy miniplayer dimensions, copied verbatim from YouTube 14.21.54
+  res/values/dimens.xml. See docs/DECOMPILE-ANALYSIS.md.
+-->
+<resources>
+    <dimen name="legacy_mini_player_width">180.0dp</dimen>
+    <dimen name="legacy_mini_player_padding">8.0dp</dimen>
+    <dimen name="legacy_mini_player_dismiss_drag_distance">90.0dp</dimen>
+    <dimen name="legacy_mini_player_dismiss_animation_distance">120.0dp</dimen>
+    <dimen name="legacy_mini_player_shadow_size">4.0dp</dimen>
+</resources>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Settings strings for the Legacy Miniplayer patch.
+  These get merged into the patched app's resources via the patch's addResources step
+  (see docs/MORPHE-INTEGRATION.md). Keys are prefixed `morphe_legacy_miniplayer_`.
+-->
+<resources>
+    <string name="morphe_legacy_miniplayer_screen_title">Legacy miniplayer</string>
+    <string name="morphe_legacy_miniplayer_screen_summary">Classic 14.x rectangle miniplayer: docked bottom-right, swipe up to maximize, swipe sideways to dismiss</string>
+
+    <string name="morphe_legacy_miniplayer_enabled_title">Enable legacy miniplayer</string>
+    <string name="morphe_legacy_miniplayer_enabled_summary_on">Classic rectangle miniplayer is used</string>
+    <string name="morphe_legacy_miniplayer_enabled_summary_off">YouTube\'s default miniplayer is used</string>
+
+    <string name="morphe_legacy_miniplayer_width_dip_title">Miniplayer width</string>
+    <string name="morphe_legacy_miniplayer_width_dip_summary">Width of the miniplayer rectangle in dp. Original was 180.</string>
+    <string name="morphe_legacy_miniplayer_width_dip_invalid_toast">Enter a width between %1$d and %2$d</string>
+
+    <string name="morphe_legacy_miniplayer_shadow_title">Show drop shadow</string>
+    <string name="morphe_legacy_miniplayer_shadow_summary_on">The floating card shadow is drawn around the miniplayer</string>
+    <string name="morphe_legacy_miniplayer_shadow_summary_off">No shadow is drawn</string>
+
+    <string name="morphe_legacy_miniplayer_hide_overlay_buttons_title">Hide overlay buttons</string>
+    <string name="morphe_legacy_miniplayer_hide_overlay_buttons_summary_on">Play/close overlay buttons are hidden, like the classic miniplayer</string>
+    <string name="morphe_legacy_miniplayer_hide_overlay_buttons_summary_off">Overlay buttons are shown</string>
+</resources>

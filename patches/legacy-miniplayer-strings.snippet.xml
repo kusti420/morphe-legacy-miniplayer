@@ -1,0 +1,12 @@
+    <string name="morphe_legacy_miniplayer_screen_title">Legacy miniplayer</string>
+    <string name="morphe_legacy_miniplayer_screen_summary">Classic 14.x rectangle miniplayer: docked bottom-right, swipe up to maximize, swipe sideways to dismiss</string>
+    <string name="morphe_legacy_miniplayer_enabled_title">Enable legacy miniplayer</string>
+    <string name="morphe_legacy_miniplayer_enabled_summary">Use the classic rectangle miniplayer instead of YouTube\'s default</string>
+    <string name="morphe_legacy_miniplayer_width_dip_title">Miniplayer width</string>
+    <string name="morphe_legacy_miniplayer_width_dip_summary">Width of the miniplayer rectangle in dp. Original was 180.</string>
+    <string name="morphe_legacy_miniplayer_shadow_title">Show drop shadow</string>
+    <string name="morphe_legacy_miniplayer_shadow_summary">Draw the classic floating-card shadow around the miniplayer</string>
+    <string name="morphe_legacy_miniplayer_hide_overlay_buttons_title">Hide overlay buttons</string>
+    <string name="morphe_legacy_miniplayer_hide_overlay_buttons_summary">Hide the expand/action buttons, like the classic miniplayer</string>
+    <string name="morphe_legacy_miniplayer_rounded_corners_title">Rounded corners</string>
+    <string name="morphe_legacy_miniplayer_rounded_corners_summary">Round the miniplayer\'s corners (off = square, like 14.x)</string>
