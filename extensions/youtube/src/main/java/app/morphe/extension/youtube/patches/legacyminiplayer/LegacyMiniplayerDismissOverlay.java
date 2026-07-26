@@ -29,6 +29,7 @@ import androidx.annotation.Nullable;
 
 import app.morphe.extension.shared.Logger;
 import app.morphe.extension.youtube.shared.PlayerType;
+import app.morphe.extension.youtube.shared.VideoState;
 
 public final class LegacyMiniplayerDismissOverlay {
 
@@ -89,6 +90,15 @@ public final class LegacyMiniplayerDismissOverlay {
     @Nullable private static View glassView;
     @Nullable private static View glassTracked;
     @Nullable private static SurfaceView glassRoundedSurface; // the video surface (dismiss slide target)
+    // End-of-video freeze: when a video ENDS while minimized, YouTube overlays the up-next / suggested
+    // thumbnail. We instead show a frozen snapshot of the last frame over the mini until playback moves
+    // on (state leaves ENDED) or the mini is maximized/dismissed. See show/hideEndFreeze.
+    @Nullable private static ImageView endFreezeView;
+    @Nullable private static Bitmap endFreezeBmp;
+    private static boolean stateObserversAdded;
+    // Previous frame's box size, used only to detect when the mini has stopped resizing so the
+    // on-screen clamp never moves it mid-animation (which could lock a transient shape).
+    private static int prevClampW, prevClampH;
     @Nullable private static ViewGroup glassContentRoot;
     @Nullable private static View.OnLayoutChangeListener glassListener;
     @Nullable private static View.OnAttachStateChangeListener glassAttachListener;
@@ -105,6 +115,7 @@ public final class LegacyMiniplayerDismissOverlay {
             final ViewGroup cr = activity.findViewById(android.R.id.content);
             if (cr == null) return;
             removeGlass(); // fresh install per attach
+            ensureStateObservers(); // wire end-of-video last-frame freeze (once)
 
             // Glass sheet + self-drawn floating drop shadow (see GlassBezelView).
             final boolean rounded = app.morphe.extension.youtube.settings.Settings
@@ -142,8 +153,113 @@ public final class LegacyMiniplayerDismissOverlay {
             glassPreDraw = () -> { positionGlass(tracked, cr); return true; };
             tracked.getViewTreeObserver().addOnPreDrawListener(glassPreDraw);
             cr.post(() -> positionGlass(tracked, cr));
+            // Re-attaching onto an already-ended video (e.g. maximize -> minimize): show the freeze.
+            if (VideoState.getCurrent() == VideoState.ENDED
+                    && PlayerType.getCurrent() == PlayerType.WATCH_WHILE_MINIMIZED) {
+                cr.post(LegacyMiniplayerDismissOverlay::showEndFreeze);
+            }
         } catch (Throwable t) {
             Logger.printException(() -> "Legacy glass install failure", t);
+        }
+    }
+
+    /**
+     * Register (once) observers that drive the end-of-video last-frame freeze. When a video ENDS while
+     * the mini is showing, YouTube draws the up-next/suggested thumbnail; we cover it with a frozen
+     * snapshot of the last frame instead. Removed as soon as playback moves on (state leaves ENDED) or
+     * the player leaves the minimized state (maximize/dismiss/next video).
+     */
+    private static void ensureStateObservers() {
+        if (stateObserversAdded) return;
+        stateObserversAdded = true;
+        try {
+            VideoState.getOnChange().addObserver((VideoState s) -> {
+                MAIN.post(() -> {
+                    if (s == VideoState.ENDED
+                            && PlayerType.getCurrent() == PlayerType.WATCH_WHILE_MINIMIZED
+                            && glassView != null) {
+                        showEndFreeze();
+                    } else {
+                        hideEndFreeze();
+                    }
+                });
+                return kotlin.Unit.INSTANCE;
+            });
+            PlayerType.getOnChange().addObserver((PlayerType t) -> {
+                MAIN.post(() -> {
+                    if (t == PlayerType.WATCH_WHILE_MINIMIZED) {
+                        // Returning to the mini while the video is still ENDED (e.g. maximized then
+                        // minimized again): re-show the freeze — no new VideoState event fires here,
+                        // so without this YouTube's up-next thumbnail comes back.
+                        if (VideoState.getCurrent() == VideoState.ENDED && glassView != null) {
+                            showEndFreeze();
+                        }
+                    } else {
+                        hideEndFreeze();
+                    }
+                });
+                return kotlin.Unit.INSTANCE;
+            });
+        } catch (Throwable t) {
+            Logger.printException(() -> "Legacy end-freeze observer setup failure", t);
+        }
+    }
+
+    /** Snapshot the current (last) frame and overlay it over the mini, covering YouTube's up-next card. */
+    private static void showEndFreeze() {
+        try {
+            if (endFreezeView != null) return; // already frozen
+            final SurfaceView sv = glassRoundedSurface;
+            final ViewGroup cr = glassContentRoot;
+            if (sv == null || cr == null) return;
+            final int w = sv.getWidth(), h = sv.getHeight();
+            if (w <= 0 || h <= 0) return;
+            final Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            PixelCopy.request(sv, bmp, result -> {
+                if (result != PixelCopy.SUCCESS
+                        || VideoState.getCurrent() != VideoState.ENDED
+                        || PlayerType.getCurrent() != PlayerType.WATCH_WHILE_MINIMIZED
+                        || glassContentRoot == null || endFreezeView != null) {
+                    if (!bmp.isRecycled()) bmp.recycle();
+                    return;
+                }
+                final ImageView iv = new ImageView(glassContentRoot.getContext());
+                iv.setImageBitmap(bmp);
+                iv.setScaleType(ImageView.ScaleType.FIT_XY);
+                final float radius = (glassView instanceof GlassBezelView)
+                        ? ((GlassBezelView) glassView).cornerRadiusPx() : 0f;
+                if (radius > 0f) {
+                    iv.setClipToOutline(true);
+                    iv.setOutlineProvider(new android.view.ViewOutlineProvider() {
+                        @Override public void getOutline(View vv, android.graphics.Outline o) {
+                            o.setRoundRect(0, 0, vv.getWidth(), vv.getHeight(), radius);
+                        }
+                    });
+                }
+                iv.setLayoutParams(new FrameLayout.LayoutParams(w, h));
+                glassContentRoot.addView(iv);
+                endFreezeView = iv;
+                endFreezeBmp = bmp;
+                if (glassView != null) glassView.bringToFront(); // keep the glass frame above the freeze
+            }, MAIN);
+        } catch (Throwable t) {
+            Logger.printException(() -> "Legacy end-freeze show failure", t);
+        }
+    }
+
+    /** Remove the end-of-video freeze overlay. */
+    private static void hideEndFreeze() {
+        final ImageView iv = endFreezeView;
+        endFreezeView = null;
+        final Bitmap bmp = endFreezeBmp;
+        endFreezeBmp = null;
+        try {
+            if (iv != null && iv.getParent() instanceof ViewGroup) {
+                ((ViewGroup) iv.getParent()).removeView(iv);
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            if (bmp != null && !bmp.isRecycled()) bmp.recycle();
         }
     }
 
@@ -158,6 +274,7 @@ public final class LegacyMiniplayerDismissOverlay {
         // fullscreen / sliding / none / PiP / inline.
         if (PlayerType.getCurrent() != PlayerType.WATCH_WHILE_MINIMIZED) {
             glassView.setVisibility(View.GONE);
+            if (endFreezeView != null) endFreezeView.setVisibility(View.GONE);
             return;
         }
 
@@ -189,17 +306,24 @@ public final class LegacyMiniplayerDismissOverlay {
         final float full = cw * 0.98f;
         if (w <= 0 || h <= 0 || !tracked.isShown() || w > full || tracked.getWidth() > full) {
             glassView.setVisibility(View.GONE); // hide when maximized / full / new fullscreen video
+            if (endFreezeView != null) endFreezeView.setVisibility(View.GONE);
             return;
         }
 
         // HARD GUARANTEE: the docked miniplayer can NEVER sit off-screen. Clamp its on-screen box to
         // the window's VISIBLE display frame (screen space minus the status/nav bars — correct even
         // when YouTube's own bottom bar is hidden, which is exactly when the mini was landing
-        // off-screen). If it was out of bounds, move the REAL video back with it (moveTo) so the
-        // video and glass stay locked to the same box. Skipped during any intended off-screen motion
-        // (drag/dismiss/snap-back) via clampSuppressed. Converges in one frame — once in-bounds it is
-        // a no-op — so it never fights YouTube unless YT actually placed the mini off-screen.
-        if (live != null && !clampSuppressed) {
+        // off-screen). We ONLY correct POSITION and pass YouTube's OWN width/height straight through —
+        // the aspect ratio is always whatever YouTube derived from the video (never defined here).
+        //
+        // Gated on the box size being STABLE across frames: during the minimize animation the box is
+        // still resizing, and moving it then could lock in a transient (square) shape before YouTube
+        // settles it to the video's real 16:9 — that was the "16:9 minimizes to square" bug. Once the
+        // size stops changing (settled/docked) we correct position if it's off-screen. Skipped during
+        // intended off-screen motion (drag/dismiss/snap-back) via clampSuppressed.
+        final boolean stable = (w == prevClampW && h == prevClampH);
+        prevClampW = w; prevClampH = h;
+        if (live != null && !clampSuppressed && stable) {
             Rect vis = new Rect();
             tracked.getRootView().getWindowVisibleDisplayFrame(vis);
             if (vis.width() >= w && vis.height() >= h) {
@@ -209,7 +333,7 @@ public final class LegacyMiniplayerDismissOverlay {
                 if (nx < vis.left) nx = vis.left;
                 if (ny < vis.top) ny = vis.top;
                 if (nx != screenX || ny != screenY) {
-                    LegacyMiniplayerNative.moveTo(new Rect(nx, ny, nx + w, ny + h));
+                    LegacyMiniplayerNative.moveTo(new Rect(nx, ny, nx + w, ny + h)); // position only, same w/h
                     screenX = nx; screenY = ny;
                 }
             }
@@ -231,10 +355,23 @@ public final class LegacyMiniplayerDismissOverlay {
         glassView.setX(screenX - c[0] - m);
         glassView.setY(screenY - c[1] - m);
         if (glassView.getVisibility() != View.VISIBLE) glassView.setVisibility(View.VISIBLE);
+
+        // The end-of-video last-frame freeze (if active) tracks the exact video box (no margin).
+        if (endFreezeView != null) {
+            FrameLayout.LayoutParams fp = (FrameLayout.LayoutParams) endFreezeView.getLayoutParams();
+            if (fp.width != w || fp.height != h || fp.leftMargin != 0 || fp.topMargin != 0) {
+                fp.width = w; fp.height = h; fp.leftMargin = 0; fp.topMargin = 0;
+                endFreezeView.setLayoutParams(fp);
+            }
+            endFreezeView.setX(screenX - c[0]);
+            endFreezeView.setY(screenY - c[1]);
+            if (endFreezeView.getVisibility() != View.VISIBLE) endFreezeView.setVisibility(View.VISIBLE);
+        }
     }
 
     /** Remove the glass overlay + listeners (call on dismiss/maximize/detach). */
     public static void removeGlass() {
+        hideEndFreeze(); // drop any end-of-video freeze along with the glass
         try {
             if (glassTracked != null) {
                 if (glassListener != null) glassTracked.removeOnLayoutChangeListener(glassListener);
@@ -260,6 +397,7 @@ public final class LegacyMiniplayerDismissOverlay {
             glassPreDraw = null;
             liveFollowing = false;
             clampSuppressed = false; // next install starts with the on-screen clamp armed
+            prevClampW = 0; prevClampH = 0;
         }
     }
 
@@ -430,20 +568,70 @@ public final class LegacyMiniplayerDismissOverlay {
         }
     }
 
-    /** Commit: slide the real miniplayer the rest of the way off (native move) + fade, then close. */
+    /** Commit: slide the real miniplayer the rest of the way off + FADE, then close. */
     public static void dismiss(int dx, boolean fling, Runnable closeAction) {
         liveFollowing = false;
         clampSuppressed = true; // keep the clamp OFF through the slide-off (video goes off-left on purpose)
         final Rect d = dockedRect;
         if (d == null) { if (closeAction != null) closeAction.run(); return; }
-        int endCx = -(d.right + 120); // fully off the left edge
         long dur = fling ? 160 : 220;
+
+        // Fade the glass frame (a normal view — alpha works).
         if (glassView != null) glassView.animate().alpha(0f).setDuration(dur).start();
-        if (glassRoundedSurface != null) glassRoundedSurface.animate().alpha(0f).setDuration(dur).start();
-        animateSlide(lastCx, endCx, dur, () -> {
+
+        // MODERN_4's video surface is natively rounded / hardware-composited and IGNORES View alpha,
+        // so fading the SurfaceView is invisible (this is why the video stopped fading). Instead
+        // overlay a frozen snapshot of the video — an ImageView, which DOES fade — move the real
+        // surface off-screen behind it, and slide+fade the snapshot. The video played live through
+        // the whole drag; only this ~200ms dismiss is a frozen frame (imperceptible for a dismiss).
+        ImageView iv = null;
+        if (contentRoot != null && snapshot != null && !snapshot.isRecycled()
+                && overlayW > 0 && overlayH > 0) {
+            try {
+                final ImageView v = new ImageView(contentRoot.getContext());
+                v.setImageBitmap(snapshot);
+                v.setScaleType(ImageView.ScaleType.FIT_XY);
+                final float radius = (glassView instanceof GlassBezelView)
+                        ? ((GlassBezelView) glassView).cornerRadiusPx() : 0f;
+                if (radius > 0f) {
+                    v.setClipToOutline(true);
+                    v.setOutlineProvider(new android.view.ViewOutlineProvider() {
+                        @Override public void getOutline(View vv, android.graphics.Outline o) {
+                            o.setRoundRect(0, 0, vv.getWidth(), vv.getHeight(), radius);
+                        }
+                    });
+                }
+                FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(overlayW, overlayH);
+                lp.leftMargin = overlayX + lastCx; // current on-screen pos (video moved during drag)
+                lp.topMargin = overlayY;
+                v.setLayoutParams(lp);
+                contentRoot.addView(v);
+                iv = v;
+            } catch (Throwable t) {
+                iv = null;
+            }
+        }
+
+        final ImageView fiv = iv;
+        final Runnable finish = () -> {
             if (closeAction != null) closeAction.run(); // dismiss the real player
+            if (fiv != null) remove(fiv);
             removeGlass(); // clears clampSuppressed
-        });
+        };
+
+        if (iv != null) {
+            // Move the real surface fully off-screen behind the snapshot (instant, same frame — the
+            // snapshot already covers the spot, so no flash).
+            Rect off = new Rect(d);
+            off.offset(-(d.right + 200), 0);
+            LegacyMiniplayerNative.moveTo(off);
+            int slide = -(overlayX + lastCx + overlayW + 200); // slide fully off the left edge
+            iv.animate().translationX(slide).alpha(0f).setDuration(dur).withEndAction(finish).start();
+        } else {
+            // Fallback (snapshot not ready): slide the real surface off + close.
+            if (glassRoundedSurface != null) glassRoundedSurface.animate().alpha(0f).setDuration(dur).start();
+            animateSlide(lastCx, -(d.right + 120), dur, finish);
+        }
     }
 
     /** Snap back: slide the real miniplayer home + restore the glass and video opacity. */

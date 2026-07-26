@@ -96,6 +96,9 @@ public final class LegacyMiniplayerController {
                     new LegacyMiniplayerGestureHandler.Callback() {
                         @Override public void onDown() {
                             docked[0] = LegacyMiniplayerNative.getDockedRect();
+                            // Snapshot the video now so a fade-able bitmap is ready if this becomes a
+                            // dismiss (the real MODERN_4 surface can't be alpha-faded directly).
+                            LegacyMiniplayerDismissOverlay.prepare(root);
                         }
 
                         @Override public void onHorizontalDrag(int dx) {
