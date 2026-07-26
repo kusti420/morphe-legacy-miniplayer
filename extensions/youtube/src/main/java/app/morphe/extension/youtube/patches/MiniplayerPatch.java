@@ -137,7 +137,13 @@ public final class MiniplayerPatch {
      * swipe-sideways=dismiss. See docs/DECOMPILE-ANALYSIS-21.04-modern.md.
      */
     private static final boolean LEGACY = Settings.LEGACY_MINIPLAYER_ENABLED.get();
-    private static final int LEGACY_WIDTH_DIP = Settings.LEGACY_MINIPLAYER_WIDTH.get();
+    /**
+     * Classic 14.x miniplayer width. Hardcoded (NOT a user setting): there is no width input, so
+     * reading a persisted value risked a stale/tiny value shrinking the miniplayer to an unusable
+     * size with no way to fix it. 180dp is the classic size and safely above the ~170dp minimum.
+     */
+    private static final int LEGACY_WIDTH_DIP = 180;
+    private static final boolean LEGACY_ROUNDED = Settings.LEGACY_MINIPLAYER_ROUNDED_CORNERS.get();
 
     /**
      * Cannot turn off double tap with modern 2 or 3 with later targets,
@@ -321,7 +327,7 @@ public final class MiniplayerPatch {
      * Injection point.
      */
     public static int getModernMiniplayerOverrideType(int original) {
-        if (LEGACY) return 1; // MODERN_1: clean rectangle, no chin
+        if (LEGACY) return 4; // MODERN_4: rounds its own surface natively (reliable) and is chin-less
         if (CURRENT_TYPE == MINIMAL) {
             // In newer app targets the minimal player can show the wrong icon if modern 4 is allowed.
             // Forcing to modern 1 seems to work.
@@ -391,7 +397,7 @@ public final class MiniplayerPatch {
      * Injection point.
      */
     public static boolean getRoundedCorners(boolean original) {
-        if (LEGACY) return false; // square corners like 14.x (rounded flag switches miniplayer type)
+        if (LEGACY) return LEGACY_ROUNDED; // YouTube rounds its own MODERN_4 surface natively
         if (CURRENT_TYPE == DEFAULT) {
             return original;
         }

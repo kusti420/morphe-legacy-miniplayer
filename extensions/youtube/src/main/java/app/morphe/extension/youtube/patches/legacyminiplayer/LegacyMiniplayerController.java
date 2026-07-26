@@ -64,6 +64,13 @@ public final class LegacyMiniplayerController {
             // that's the MAXIMIZED watch page's seekbar and hiding it removed it when maximized.
             offscreen(findFromRoot(root, "floaty_bar_time_bar_view"));
 
+            // MODERN_3 shows a bottom control row (rewind / play-pause / forward) overlaying the
+            // video — hide it for the clean 14.x video-only look. Re-hide after layout in case YT
+            // re-shows it on tap/attach.
+            offscreen(findFromRoot(root, "controls_layout"));
+            root.postDelayed(() -> offscreen(findFromRoot(root, "controls_layout")), 500);
+            root.postDelayed(() -> offscreen(findFromRoot(root, "controls_layout")), 1500);
+
             // Kill YouTube's dark edge scrim + black backing on the miniplayer: the scan showed
             // GradientDrawable backgrounds (side-darkening scrims) on watch_player/floaty_bar_controls_view
             // and a black ColorDrawable backing — the dark borders vs clear center that look off.
@@ -103,6 +110,9 @@ public final class LegacyMiniplayerController {
                             // drags up — video keeps playing and it grows, like 14.x.
                             Rect d = docked[0];
                             if (d == null) return;
+                            // The grow rect legitimately reaches the top edge (toward fullscreen);
+                            // suppress the on-screen clamp so it can't fight the last frames of it.
+                            LegacyMiniplayerDismissOverlay.setClampSuppressed(true);
                             float travel = d.top - fullRect.top;
                             if (travel <= 0) return;
                             // Up-only: clamp to [0,1] so dragging back DOWN can't push the
@@ -119,6 +129,9 @@ public final class LegacyMiniplayerController {
                         @Override public void onSettle(boolean wasVertical) {
                             if (wasVertical) {
                                 if (docked[0] != null) LegacyMiniplayerNative.moveTo(docked[0]);
+                                // Re-arm the clamp: if that docked rect is itself off-screen, the
+                                // next frame pulls it back on-screen.
+                                LegacyMiniplayerDismissOverlay.setClampSuppressed(false);
                             } else {
                                 LegacyMiniplayerDismissOverlay.settle();
                             }

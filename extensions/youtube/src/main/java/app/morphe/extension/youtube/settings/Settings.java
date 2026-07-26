@@ -287,8 +287,6 @@ public class Settings extends SharedYouTubeSettings {
 
     // Legacy miniplayer (classic 14.x rectangle miniplayer)
     public static final BooleanSetting LEGACY_MINIPLAYER_ENABLED = new BooleanSetting("morphe_legacy_miniplayer_enabled", TRUE, true);
-    public static final IntegerSetting LEGACY_MINIPLAYER_WIDTH = new IntegerSetting("morphe_legacy_miniplayer_width_dip", 180, true, parent(LEGACY_MINIPLAYER_ENABLED));
-    public static final BooleanSetting LEGACY_MINIPLAYER_SHADOW = new BooleanSetting("morphe_legacy_miniplayer_shadow", TRUE, true, parent(LEGACY_MINIPLAYER_ENABLED));
     public static final BooleanSetting LEGACY_MINIPLAYER_HIDE_OVERLAY_BUTTONS = new BooleanSetting("morphe_legacy_miniplayer_hide_overlay_buttons", TRUE, true, parent(LEGACY_MINIPLAYER_ENABLED));
     public static final BooleanSetting LEGACY_MINIPLAYER_ROUNDED_CORNERS = new BooleanSetting("morphe_legacy_miniplayer_rounded_corners", TRUE, true, parent(LEGACY_MINIPLAYER_ENABLED));
     public static final BooleanSetting LEGACY_MINIPLAYER_GLASS = new BooleanSetting("morphe_legacy_miniplayer_glass", TRUE, true, parent(LEGACY_MINIPLAYER_ENABLED));

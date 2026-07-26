@@ -28,6 +28,7 @@ import android.widget.ImageView;
 import androidx.annotation.Nullable;
 
 import app.morphe.extension.shared.Logger;
+import app.morphe.extension.youtube.shared.PlayerType;
 
 public final class LegacyMiniplayerDismissOverlay {
 
@@ -87,13 +88,7 @@ public final class LegacyMiniplayerDismissOverlay {
 
     @Nullable private static View glassView;
     @Nullable private static View glassTracked;
-    @Nullable private static SurfaceView glassRoundedSurface;
-    @Nullable private static java.util.List<View> glassClipped;
-    private static boolean glassWantRounded;   // rounded-corners toggle for this session
-    private static float glassCornerRadiusPx;  // clip is "applied" iff glassClipped != null
-    private static boolean glassClipComplete;  // did applyRoundedClip reach watch_player + clip kids
-    private static int glassClipRetries;       // frames spent retrying an incomplete clip
-    @Nullable private static android.view.ViewOutlineProvider glassRound; // shared rounded outline
+    @Nullable private static SurfaceView glassRoundedSurface; // the video surface (dismiss slide target)
     @Nullable private static ViewGroup glassContentRoot;
     @Nullable private static View.OnLayoutChangeListener glassListener;
     @Nullable private static View.OnAttachStateChangeListener glassAttachListener;
@@ -128,26 +123,10 @@ public final class LegacyMiniplayerDismissOverlay {
             v.setLayoutParams(new FrameLayout.LayoutParams(0, 0));
             cr.addView(v);
             glassView = v;
+            glassRoundedSurface = sv; // dismiss slide target; video corners are rounded by YT natively
+                                      // (MODERN_4 + miniplayer_corner_radius overridden to 12dp).
 
-            // Rounded video corners (when the toggle is on). clipToOutline on the SurfaceView ITSELF
-            // is ignored by this device's compositor; clipping its ANCESTOR chain (player_view /
-            // player_fragment_container, all inside watch_player) rounds the composited surface. The
-            // clip lives on views that YouTube REUSES for the fullscreen player, so it must never
-            // outlive the docked-mini state — its apply/remove is driven every frame by positionGlass
-            // (removed the instant the player isn't mini-sized), which is leak-proof.
-            glassRoundedSurface = sv;
-            glassWantRounded = rounded && sv != null;
-            glassCornerRadiusPx = 12f * density;
-            glassClipped = null;
-            glassClipComplete = false;
-            glassClipRetries = 0;
-            // Apply the clip RIGHT NOW (earliest hook) so corners are rounded from the first frame
-            // of the minimize transition instead of popping rounded a moment later. positionGlass
-            // then re-asserts/re-derives it each frame (retries if the chain wasn't ready yet).
-            if (glassWantRounded) glassClipComplete = applyRoundedClip(sv, glassCornerRadiusPx);
-
-            // Track the SurfaceView itself (not the taller watch_player container) so the frost
-            // ring is a perfectly-registered continuation of the live video behind it.
+            // Track the SurfaceView's on-screen rect so the glass sits exactly over the video.
             final View tracked = sv != null ? sv : miniplayerView;
             glassTracked = tracked;
             glassContentRoot = cr;
@@ -168,68 +147,26 @@ public final class LegacyMiniplayerDismissOverlay {
         }
     }
 
-    /**
-     * Round the miniplayer's corners for ANY aspect ratio. clipToOutline on the SurfaceView alone is
-     * ignored by the compositor, so clip the surface's ancestor chain up to (but NOT) watch_player
-     * AND every direct child of watch_player (the video is one child; music/end-screen show a SQUARE
-     * thumbnail ImageView in a sibling child). watch_player itself is never clipped (that breaks the
-     * maximize transition). Returns true once watch_player was reached (a complete clip).
-     */
-    private static boolean applyRoundedClip(SurfaceView sv, float radiusPx) {
-        final java.util.List<View> clipped = new java.util.ArrayList<>();
-        glassRound = new android.view.ViewOutlineProvider() {
-            @Override public void getOutline(View view, android.graphics.Outline o) {
-                o.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radiusPx);
-            }
-        };
-        int watchPlayerId = app.morphe.extension.shared.ResourceUtils.getIdentifier(
-                app.morphe.extension.shared.ResourceType.ID, "watch_player");
-        View v = sv;
-        View watchPlayer = null;
-        int level = 0;
-        while (v != null && level < 14) {
-            if (v.getId() == watchPlayerId) { watchPlayer = v; break; }
-            v.setOutlineProvider(glassRound);
-            v.setClipToOutline(true);
-            clipped.add(v);
-            android.view.ViewParent p = v.getParent();
-            if (!(p instanceof View)) break;
-            v = (View) p;
-            level++;
-        }
-        if (watchPlayer instanceof ViewGroup) {
-            ViewGroup wp = (ViewGroup) watchPlayer;
-            for (int i = 0, n = wp.getChildCount(); i < n; i++) {
-                View c = wp.getChildAt(i);
-                if (!clipped.contains(c)) {
-                    c.setOutlineProvider(glassRound);
-                    c.setClipToOutline(true);
-                    clipped.add(c);
-                }
-            }
-        }
-        glassClipped = clipped;
-        return watchPlayer != null;
-    }
-
-    /** Remove the rounded clip from every view it was applied to. Safe to call repeatedly. */
-    private static void removeRoundedClip() {
-        if (glassClipped != null) {
-            for (View v : glassClipped) {
-                try {
-                    v.setClipToOutline(false);
-                    v.setOutlineProvider(android.view.ViewOutlineProvider.BACKGROUND);
-                } catch (Throwable ignored) {}
-            }
-            glassClipped = null;
-        }
-        glassRound = null;
-        glassClipComplete = false;
-        glassClipRetries = 0;
-    }
-
     private static void positionGlass(View tracked, ViewGroup cr) {
         if (glassView == null) return;
+
+        // Authoritative visibility gate: the glass belongs ONLY to the docked (minimized) miniplayer.
+        // Geometry heuristics (surface bounds) go STALE when the app is backgrounded with a mini and
+        // resumed straight into a maximized player — that left the glass showing at the old docked
+        // spot over a maximized video. YouTube's own PlayerType flips on every real state change, so
+        // it never goes stale. Show glass only while genuinely minimized; hide for maximized /
+        // fullscreen / sliding / none / PiP / inline.
+        if (PlayerType.getCurrent() != PlayerType.WATCH_WHILE_MINIMIZED) {
+            glassView.setVisibility(View.GONE);
+            return;
+        }
+
+        // The app content area in screen-space (excludes the status bar AND system nav bar, so the
+        // clamp below stays correct even on pages where YouTube's bottom bar is hidden — that was
+        // exactly when the docked miniplayer was landing off-screen).
+        int[] c = new int[2];
+        cr.getLocationOnScreen(c);
+        final int cw = cr.getWidth();
 
         // Follow the video's ACTUAL box (oxb.i, screen-space) so the glass can never desync from a
         // grown/moved miniplayer — the SurfaceView's view bounds don't reflect oxb.u moves, which is
@@ -249,39 +186,35 @@ public final class LegacyMiniplayerDismissOverlay {
         // player maximizes (or the surface is reused for a new full video). oxb.i can go stale at
         // the docked size after maximize, so relying on it alone left the glass orphaned over the
         // feed. Position still comes from oxb.i (accurate during mini grow/move).
-        final float full = cr.getWidth() * 0.98f;
+        final float full = cw * 0.98f;
         if (w <= 0 || h <= 0 || !tracked.isShown() || w > full || tracked.getWidth() > full) {
-            glassView.setVisibility(View.GONE);
-            // Not a docked mini (maximized / full / new fullscreen video that REUSES these views):
-            // strip the rounded clip immediately so it can never persist onto a non-mini player.
-            if (glassClipped != null) removeRoundedClip();
+            glassView.setVisibility(View.GONE); // hide when maximized / full / new fullscreen video
             return;
         }
-        // Docked mini and visible: keep the rounded clip asserted EVERY frame. Walk the chain once,
-        // then re-assert clipToOutline (YouTube clears it during re-layouts/surface changes, which is
-        // why rounding "sometimes" dropped — most visible with the glass off). setClipToOutline is a
-        // no-op when unchanged, so this is effectively free unless the clip was actually cleared.
-        if (glassWantRounded && glassRoundedSurface != null) {
-            if (glassClipped == null || (!glassClipComplete && glassClipRetries < 120)) {
-                // (Re)derive the clip until it actually reaches watch_player + clips the thumbnail
-                // siblings. On a cold relaunch the chain isn't fully laid out at install time, so a
-                // single apply can be incomplete; retry for up to ~120 frames until complete.
-                glassClipComplete = applyRoundedClip(glassRoundedSurface, glassCornerRadiusPx);
-                if (!glassClipComplete) glassClipRetries++;
-            } else {
-                // Re-assert the rounded OUTLINE PROVIDER + clipToOutline every frame. YouTube resets
-                // some views' outline provider back to the default (rectangular) while leaving
-                // clipToOutline=true — so they clip to a SQUARE and slip past a boolean-only check.
-                // Re-setting the same provider instance is a no-op when unchanged.
-                for (int i = 0, n = glassClipped.size(); i < n; i++) {
-                    View cv = glassClipped.get(i);
-                    cv.setOutlineProvider(glassRound);
-                    cv.setClipToOutline(true);
+
+        // HARD GUARANTEE: the docked miniplayer can NEVER sit off-screen. Clamp its on-screen box to
+        // the window's VISIBLE display frame (screen space minus the status/nav bars — correct even
+        // when YouTube's own bottom bar is hidden, which is exactly when the mini was landing
+        // off-screen). If it was out of bounds, move the REAL video back with it (moveTo) so the
+        // video and glass stay locked to the same box. Skipped during any intended off-screen motion
+        // (drag/dismiss/snap-back) via clampSuppressed. Converges in one frame — once in-bounds it is
+        // a no-op — so it never fights YouTube unless YT actually placed the mini off-screen.
+        if (live != null && !clampSuppressed) {
+            Rect vis = new Rect();
+            tracked.getRootView().getWindowVisibleDisplayFrame(vis);
+            if (vis.width() >= w && vis.height() >= h) {
+                int nx = screenX, ny = screenY;
+                if (nx + w > vis.right) nx = vis.right - w;
+                if (ny + h > vis.bottom) ny = vis.bottom - h;
+                if (nx < vis.left) nx = vis.left;
+                if (ny < vis.top) ny = vis.top;
+                if (nx != screenX || ny != screenY) {
+                    LegacyMiniplayerNative.moveTo(new Rect(nx, ny, nx + w, ny + h));
+                    screenX = nx; screenY = ny;
                 }
             }
         }
-        int[] c = new int[2];
-        cr.getLocationOnScreen(c);
+
         // The glass view is bigger than the video by `m` on every side so its self-drawn drop
         // shadow has room to spread over the feed; it draws the video content in its inner rect.
         int m = (glassView instanceof GlassBezelView) ? ((GlassBezelView) glassView).marginPx() : 0;
@@ -313,7 +246,6 @@ public final class LegacyMiniplayerDismissOverlay {
             if (glassRoundedSurface != null) {
                 glassRoundedSurface.setAlpha(1f); // reset opacity (SurfaceView is recycled)
             }
-            removeRoundedClip(); // strip the rounded clip off the (reused) view chain
             if (glassView != null && glassView.getParent() instanceof ViewGroup) {
                 ((ViewGroup) glassView.getParent()).removeView(glassView);
             }
@@ -322,12 +254,12 @@ public final class LegacyMiniplayerDismissOverlay {
             glassView = null;
             glassTracked = null;
             glassRoundedSurface = null;
-            glassClipped = null;
-            glassWantRounded = false;
             glassContentRoot = null;
             glassListener = null;
             glassAttachListener = null;
             glassPreDraw = null;
+            liveFollowing = false;
+            clampSuppressed = false; // next install starts with the on-screen clamp armed
         }
     }
 
@@ -347,9 +279,25 @@ public final class LegacyMiniplayerDismissOverlay {
     private static boolean liveFollowing;
     private static int lastCx; // current horizontal offset from docked (px, <=0)
 
+    // True for the ENTIRE duration of an intended off-screen motion — the finger drag AND its
+    // trailing slide animation (dismiss slide-off, snap-back). The on-screen clamp in positionGlass
+    // must not fire during these, or it would yank the video back and break the animation. This is
+    // broader than liveFollowing, which dismiss()/settle() clear before their animations even start.
+    private static volatile boolean clampSuppressed;
+
     /** True once a horizontal dismiss drag has started. */
     public static boolean isFollowing() {
         return liveFollowing;
+    }
+
+    /**
+     * Suppress/re-arm the on-screen clamp. The controller calls this around the swipe-up grow, whose
+     * rect legitimately reaches the top edge (fullscreen) — the clamp keeps the mini out of the
+     * status/nav bars, which is wrong mid-grow. Re-armed (false) on settle so a docked position that
+     * YouTube placed off-screen still gets corrected.
+     */
+    public static void setClampSuppressed(boolean suppressed) {
+        clampSuppressed = suppressed;
     }
 
     /**
@@ -361,6 +309,7 @@ public final class LegacyMiniplayerDismissOverlay {
         dockedRect = LegacyMiniplayerNative.getDockedRect();
         lastCx = 0;
         liveFollowing = dockedRect != null;
+        clampSuppressed = liveFollowing; // suppress the on-screen clamp for the whole drag
         return liveFollowing;
     }
 
@@ -484,6 +433,7 @@ public final class LegacyMiniplayerDismissOverlay {
     /** Commit: slide the real miniplayer the rest of the way off (native move) + fade, then close. */
     public static void dismiss(int dx, boolean fling, Runnable closeAction) {
         liveFollowing = false;
+        clampSuppressed = true; // keep the clamp OFF through the slide-off (video goes off-left on purpose)
         final Rect d = dockedRect;
         if (d == null) { if (closeAction != null) closeAction.run(); return; }
         int endCx = -(d.right + 120); // fully off the left edge
@@ -492,14 +442,15 @@ public final class LegacyMiniplayerDismissOverlay {
         if (glassRoundedSurface != null) glassRoundedSurface.animate().alpha(0f).setDuration(dur).start();
         animateSlide(lastCx, endCx, dur, () -> {
             if (closeAction != null) closeAction.run(); // dismiss the real player
-            removeGlass();
+            removeGlass(); // clears clampSuppressed
         });
     }
 
     /** Snap back: slide the real miniplayer home + restore the glass and video opacity. */
     public static void settle() {
         liveFollowing = false;
-        animateSlide(lastCx, 0, 180, null);
+        clampSuppressed = true; // video is off-left; keep clamp OFF until it has slid home
+        animateSlide(lastCx, 0, 180, () -> clampSuppressed = false); // re-arm clamp once docked again
         if (glassView != null) glassView.animate().alpha(1f).setDuration(180).start();
         if (glassRoundedSurface != null) glassRoundedSurface.animate().alpha(1f).setDuration(180).start();
     }

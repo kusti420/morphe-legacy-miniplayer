@@ -17,14 +17,15 @@ package app.morphe.patches.youtube.layout.legacyminiplayer
 
 import app.morphe.patcher.extensions.InstructionExtensions.addInstruction
 import app.morphe.patcher.patch.bytecodePatch
+import app.morphe.patcher.patch.resourcePatch
+import app.morphe.util.findElementByAttributeValueOrThrow
 import app.morphe.util.indexOfFirstInstructionOrThrow
 import com.android.tools.smali.dexlib2.Opcode
-import app.morphe.patches.shared.misc.settings.preference.InputType
 import app.morphe.patches.shared.misc.settings.preference.PreferenceScreenPreference
 import app.morphe.patches.shared.misc.settings.preference.SwitchPreference
-import app.morphe.patches.shared.misc.settings.preference.TextPreference
 import app.morphe.patches.youtube.layout.miniplayer.miniplayerPatch
 import app.morphe.patches.youtube.misc.extension.sharedExtensionPatch
+import app.morphe.patches.youtube.misc.playertype.playerTypeHookPatch
 import app.morphe.patches.youtube.misc.settings.PreferenceScreen
 import app.morphe.patches.youtube.misc.settings.settingsPatch
 import app.morphe.patches.youtube.shared.Constants.COMPATIBILITY_YOUTUBE
@@ -33,6 +34,22 @@ private const val EXTENSION_CLASS =
     "Lapp/morphe/extension/youtube/patches/legacyminiplayer/LegacyMiniplayerController;"
 private const val NATIVE_CLASS =
     "Lapp/morphe/extension/youtube/patches/legacyminiplayer/LegacyMiniplayerNative;"
+
+/**
+ * Round the miniplayer's video at OUR 12dp radius (YouTube's default is 8dp) so YouTube's own
+ * native rounding — which is reliable across all content, unlike a View clip — matches our glass
+ * overlay's 12dp corners.
+ */
+private val legacyMiniplayerCornerRadiusPatch = resourcePatch {
+    execute {
+        document("res/values/dimens.xml").use { document ->
+            document.childNodes.findElementByAttributeValueOrThrow(
+                attributeName = "name",
+                value = "miniplayer_corner_radius",
+            ).textContent = "12.0dip"
+        }
+    }
+}
 
 @Suppress("unused")
 val legacyMiniplayerPatch = bytecodePatch(
@@ -44,6 +61,8 @@ val legacyMiniplayerPatch = bytecodePatch(
         settingsPatch,
         sharedExtensionPatch,
         miniplayerPatch, // provides the flag-override methods this toggle drives to legacy values
+        legacyMiniplayerCornerRadiusPatch, // 8dp -> 12dp so YT native rounding matches the glass
+        playerTypeHookPatch, // keeps PlayerType.getCurrent() live — glass visibility gates on it
     )
 
     compatibleWith(COMPATIBILITY_YOUTUBE)
@@ -56,7 +75,6 @@ val legacyMiniplayerPatch = bytecodePatch(
                 sorting = PreferenceScreenPreference.Sorting.UNSORTED,
                 preferences = setOf(
                     SwitchPreference("morphe_legacy_miniplayer_enabled", summary = true),
-                    TextPreference("morphe_legacy_miniplayer_width_dip", inputType = InputType.NUMBER),
                     SwitchPreference("morphe_legacy_miniplayer_hide_overlay_buttons", summary = true),
                     SwitchPreference("morphe_legacy_miniplayer_rounded_corners", summary = true),
                     SwitchPreference("morphe_legacy_miniplayer_glass", summary = true),
