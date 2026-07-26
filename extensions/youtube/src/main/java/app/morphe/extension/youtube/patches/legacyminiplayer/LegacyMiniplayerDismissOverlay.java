@@ -88,6 +88,10 @@ public final class LegacyMiniplayerDismissOverlay {
     @Nullable private static View glassView;
     @Nullable private static View glassTracked;
     @Nullable private static SurfaceView glassRoundedSurface;
+    @Nullable private static java.util.List<View> glassClipped;
+    private static boolean glassWantRounded;   // rounded-corners toggle for this session
+    private static boolean glassClipApplied;   // is the rounded clip currently on the view chain
+    private static float glassCornerRadiusPx;
     @Nullable private static ViewGroup glassContentRoot;
     @Nullable private static View.OnLayoutChangeListener glassListener;
     @Nullable private static View.OnAttachStateChangeListener glassAttachListener;
@@ -108,7 +112,9 @@ public final class LegacyMiniplayerDismissOverlay {
             // Glass sheet + self-drawn floating drop shadow (see GlassBezelView).
             final boolean rounded = app.morphe.extension.youtube.settings.Settings
                     .LEGACY_MINIPLAYER_ROUNDED_CORNERS.get();
-            GlassBezelView v = new GlassBezelView(cr.getContext(), density, rounded);
+            final boolean glassOn = app.morphe.extension.youtube.settings.Settings
+                    .LEGACY_MINIPLAYER_GLASS.get();
+            GlassBezelView v = new GlassBezelView(cr.getContext(), density, rounded, glassOn);
             SurfaceView sv = findSurfaceView(miniplayerView);
             if (sv == null) sv = findSurfaceView(miniplayerView.getRootView());
             v.setSource(sv);
@@ -121,24 +127,16 @@ public final class LegacyMiniplayerDismissOverlay {
             cr.addView(v);
             glassView = v;
 
-            // Round the actual video corners (when the toggle is on): clip the SurfaceView to a
-            // rounded outline. This shows the FEED (not black) in the corners because the opaque
-            // black backing is neutralized to transparent (neutralizeScrims). Clip ONLY the
-            // SurfaceView — clipping the container breaks YT's maximize<->minimize transition. Reset
-            // in removeGlass so a maximized video isn't rounded. glassRoundedSurface is also the
-            // dismiss-slide target regardless of rounding.
-            if (sv != null) {
-                if (rounded) {
-                    final float radiusPx = 12f * density; // matches GlassBezelView corner radius
-                    sv.setOutlineProvider(new android.view.ViewOutlineProvider() {
-                        @Override public void getOutline(View view, android.graphics.Outline o) {
-                            o.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radiusPx);
-                        }
-                    });
-                    sv.setClipToOutline(true);
-                }
-                glassRoundedSurface = sv;
-            }
+            // Rounded video corners (when the toggle is on). clipToOutline on the SurfaceView ITSELF
+            // is ignored by this device's compositor; clipping its ANCESTOR chain (player_view /
+            // player_fragment_container, all inside watch_player) rounds the composited surface. The
+            // clip lives on views that YouTube REUSES for the fullscreen player, so it must never
+            // outlive the docked-mini state — its apply/remove is driven every frame by positionGlass
+            // (removed the instant the player isn't mini-sized), which is leak-proof.
+            glassRoundedSurface = sv;
+            glassWantRounded = rounded && sv != null;
+            glassCornerRadiusPx = 12f * density;
+            glassClipApplied = false;
 
             // Track the SurfaceView itself (not the taller watch_player container) so the frost
             // ring is a perfectly-registered continuation of the live video behind it.
@@ -162,17 +160,84 @@ public final class LegacyMiniplayerDismissOverlay {
         }
     }
 
+    /**
+     * DIAGNOSTIC: apply a rounded clipToOutline to the SurfaceView and every ancestor up to (but
+     * not including) watch_player, logging each level. Lets us find on-device which level (if any)
+     * actually rounds the composited video surface — clipToOutline on the SurfaceView alone is
+     * ignored by Samsung's compositor.
+     */
+    private static void applyRoundedClip(SurfaceView sv, float radiusPx) {
+        final java.util.List<View> clipped = new java.util.ArrayList<>();
+        final android.view.ViewOutlineProvider round = new android.view.ViewOutlineProvider() {
+            @Override public void getOutline(View view, android.graphics.Outline o) {
+                o.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radiusPx);
+            }
+        };
+        int watchPlayerId = app.morphe.extension.shared.ResourceUtils.getIdentifier(
+                app.morphe.extension.shared.ResourceType.ID, "watch_player");
+        View v = sv;
+        int level = 0;
+        while (v != null && level < 10) {
+            if (v.getId() == watchPlayerId) break; // don't clip watch_player (breaks transition)
+            v.setOutlineProvider(round);
+            v.setClipToOutline(true);
+            clipped.add(v);
+            android.view.ViewParent p = v.getParent();
+            if (!(p instanceof View)) break;
+            v = (View) p;
+            level++;
+        }
+        glassClipped = clipped;
+    }
+
+    /** Remove the rounded clip from every view it was applied to. Safe to call repeatedly. */
+    private static void removeRoundedClip() {
+        if (glassClipped != null) {
+            for (View v : glassClipped) {
+                try {
+                    v.setClipToOutline(false);
+                    v.setOutlineProvider(android.view.ViewOutlineProvider.BACKGROUND);
+                } catch (Throwable ignored) {}
+            }
+            glassClipped = null;
+        }
+        glassClipApplied = false;
+    }
+
     private static void positionGlass(View tracked, ViewGroup cr) {
         if (glassView == null) return;
-        int w = tracked.getWidth(), h = tracked.getHeight();
-        // Keep the glass tracking the video through the whole swipe-up GROW (it grows with the
-        // video); only hide when essentially full-screen. Actual maximize removes it via removeGlass.
-        if (w <= 0 || h <= 0 || w > cr.getWidth() * 0.98f || !tracked.isShown()) {
+
+        // Follow the video's ACTUAL box (oxb.i, screen-space) so the glass can never desync from a
+        // grown/moved miniplayer — the SurfaceView's view bounds don't reflect oxb.u moves, which is
+        // what left the frame smaller/offset after an over-drag. Fall back to the view bounds until
+        // the native bridge is ready.
+        int w, h, screenX, screenY;
+        Rect live = LegacyMiniplayerNative.getLiveRect();
+        if (live != null && live.width() > 0 && live.height() > 0) {
+            w = live.width(); h = live.height(); screenX = live.left; screenY = live.top;
+        } else {
+            w = tracked.getWidth(); h = tracked.getHeight();
+            int[] s = new int[2];
+            tracked.getLocationOnScreen(s);
+            screenX = s[0]; screenY = s[1];
+        }
+        // Decide MAXIMIZED from the SurfaceView's view bounds, which reliably go full-size when the
+        // player maximizes (or the surface is reused for a new full video). oxb.i can go stale at
+        // the docked size after maximize, so relying on it alone left the glass orphaned over the
+        // feed. Position still comes from oxb.i (accurate during mini grow/move).
+        final float full = cr.getWidth() * 0.98f;
+        if (w <= 0 || h <= 0 || !tracked.isShown() || w > full || tracked.getWidth() > full) {
             glassView.setVisibility(View.GONE);
+            // Not a docked mini (maximized / full / new fullscreen video that REUSES these views):
+            // strip the rounded clip immediately so it can never persist onto a non-mini player.
+            if (glassClipApplied) removeRoundedClip();
             return;
         }
-        int[] s = new int[2];
-        tracked.getLocationOnScreen(s);
+        // Docked mini and visible: ensure the rounded clip is on (re-applies after a maximize→mini).
+        if (glassWantRounded && !glassClipApplied && glassRoundedSurface != null) {
+            applyRoundedClip(glassRoundedSurface, glassCornerRadiusPx);
+            glassClipApplied = true;
+        }
         int[] c = new int[2];
         cr.getLocationOnScreen(c);
         // The glass view is bigger than the video by `m` on every side so its self-drawn drop
@@ -188,8 +253,8 @@ public final class LegacyMiniplayerDismissOverlay {
             glassView.setLayoutParams(lp);
         }
         // Position via translation every frame — cheap, no layout, follows the miniplayer exactly.
-        glassView.setX(s[0] - c[0] - m);
-        glassView.setY(s[1] - c[1] - m);
+        glassView.setX(screenX - c[0] - m);
+        glassView.setY(screenY - c[1] - m);
         if (glassView.getVisibility() != View.VISIBLE) glassView.setVisibility(View.VISIBLE);
     }
 
@@ -204,10 +269,9 @@ public final class LegacyMiniplayerDismissOverlay {
                 }
             }
             if (glassRoundedSurface != null) {
-                glassRoundedSurface.setClipToOutline(false);
-                glassRoundedSurface.setOutlineProvider(android.view.ViewOutlineProvider.BACKGROUND);
                 glassRoundedSurface.setAlpha(1f); // reset opacity (SurfaceView is recycled)
             }
+            removeRoundedClip(); // strip the rounded clip off the (reused) view chain
             if (glassView != null && glassView.getParent() instanceof ViewGroup) {
                 ((ViewGroup) glassView.getParent()).removeView(glassView);
             }
@@ -216,6 +280,9 @@ public final class LegacyMiniplayerDismissOverlay {
             glassView = null;
             glassTracked = null;
             glassRoundedSurface = null;
+            glassClipped = null;
+            glassWantRounded = false;
+            glassClipApplied = false;
             glassContentRoot = null;
             glassListener = null;
             glassAttachListener = null;

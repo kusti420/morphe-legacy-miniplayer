@@ -291,6 +291,7 @@ public class Settings extends SharedYouTubeSettings {
     public static final BooleanSetting LEGACY_MINIPLAYER_SHADOW = new BooleanSetting("morphe_legacy_miniplayer_shadow", TRUE, true, parent(LEGACY_MINIPLAYER_ENABLED));
     public static final BooleanSetting LEGACY_MINIPLAYER_HIDE_OVERLAY_BUTTONS = new BooleanSetting("morphe_legacy_miniplayer_hide_overlay_buttons", TRUE, true, parent(LEGACY_MINIPLAYER_ENABLED));
     public static final BooleanSetting LEGACY_MINIPLAYER_ROUNDED_CORNERS = new BooleanSetting("morphe_legacy_miniplayer_rounded_corners", TRUE, true, parent(LEGACY_MINIPLAYER_ENABLED));
+    public static final BooleanSetting LEGACY_MINIPLAYER_GLASS = new BooleanSetting("morphe_legacy_miniplayer_glass", TRUE, true, parent(LEGACY_MINIPLAYER_ENABLED));
 
     // Comments
     public static final BooleanSetting HIDE_COMMENTS_CAROUSEL = new BooleanSetting("morphe_hide_comments_carousel", FALSE);

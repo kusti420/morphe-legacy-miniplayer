@@ -86,6 +86,16 @@ public final class LegacyMiniplayerNative {
         }
     }
 
+    /**
+     * The miniplayer's LIVE on-screen rect (oxb.i) — exactly where the video is currently drawn,
+     * even mid-grow/move. Same underlying field as {@link #getDockedRect()}; named for the glass
+     * tracker, which must follow the real video box (not the SurfaceView's view bounds).
+     */
+    @Nullable
+    public static Rect getLiveRect() {
+        return getDockedRect();
+    }
+
     /** Move the real miniplayer (video + box) to a rect (used to grow, hide off-screen, restore). */
     public static void moveTo(Rect rect) {
         try {

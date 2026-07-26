@@ -105,7 +105,9 @@ public final class LegacyMiniplayerController {
                             if (d == null) return;
                             float travel = d.top - fullRect.top;
                             if (travel <= 0) return;
-                            float p = Math.min(-dy / travel, 1f);
+                            // Up-only: clamp to [0,1] so dragging back DOWN can't push the
+                            // miniplayer below its docked position (mirror of the left-only dismiss).
+                            float p = Math.max(0f, Math.min(-dy / travel, 1f));
                             LegacyMiniplayerNative.moveTo(lerp(d, fullRect, p));
                         }
 

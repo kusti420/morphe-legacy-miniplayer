@@ -37,9 +37,12 @@ public final class GlassBezelView extends View {
     private final Paint clearPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path clip = new Path();
 
-    public GlassBezelView(Context ctx, float density, boolean rounded) {
+    private final boolean glassEnabled;
+
+    public GlassBezelView(Context ctx, float density, boolean rounded, boolean glassEnabled) {
         super(ctx);
         this.density = density;
+        this.glassEnabled = glassEnabled;
         this.cr = (rounded ? 12f : 2f) * density; // matches the video's corner treatment
         this.margin = Math.round(14f * density);
         clearPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
@@ -62,6 +65,7 @@ public final class GlassBezelView extends View {
 
     @Override
     protected void onDraw(Canvas c) {
+        if (!glassEnabled) return; // glass toggle off: draw nothing (no sheet, no shadow)
         final int w = getWidth(), h = getHeight();
         if (w <= 0 || h <= 0) return;
         final float m = margin;

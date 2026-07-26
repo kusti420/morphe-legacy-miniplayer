@@ -10,3 +10,5 @@
     <string name="morphe_legacy_miniplayer_hide_overlay_buttons_summary">Hide the expand/action buttons, like the classic miniplayer</string>
     <string name="morphe_legacy_miniplayer_rounded_corners_title">Rounded corners</string>
     <string name="morphe_legacy_miniplayer_rounded_corners_summary">Round the miniplayer\'s corners (off = square, like 14.x)</string>
+    <string name="morphe_legacy_miniplayer_glass_title">Glass effect</string>
+    <string name="morphe_legacy_miniplayer_glass_summary">Show the glass sheen and floating shadow on the miniplayer (off = plain video)</string>

@@ -59,6 +59,7 @@ val legacyMiniplayerPatch = bytecodePatch(
                     TextPreference("morphe_legacy_miniplayer_width_dip", inputType = InputType.NUMBER),
                     SwitchPreference("morphe_legacy_miniplayer_hide_overlay_buttons", summary = true),
                     SwitchPreference("morphe_legacy_miniplayer_rounded_corners", summary = true),
+                    SwitchPreference("morphe_legacy_miniplayer_glass", summary = true),
                 ),
             ),
         )
