@@ -291,12 +291,22 @@ public final class LegacyMiniplayerDismissOverlay {
         // the native bridge is ready.
         int w, h, screenX, screenY;
         Rect live = LegacyMiniplayerNative.getLiveRect();
+        // oxb.i's X origin is YouTube's player-container left edge, i.e. inset from the TRUE screen
+        // by the LEFT system inset (display cutout on the left in ROTATION_90 = 88px here; nav bar on
+        // the left in ROTATION_270 = 135px here; 0 in portrait). Its Y origin, however, IS the screen
+        // top. So lift oxb.i into true screen space by adding the left inset to X only — otherwise the
+        // glass renders one left-inset too far left in landscape. Read live so it self-updates on
+        // rotation / nav-mode change. c[0]/c[1] in setX/setY below then cancel correctly for any
+        // content-view offset (edge-to-edge or inset).
+        int oxbInsetX = 0;
         if (live != null && live.width() > 0 && live.height() > 0) {
-            w = live.width(); h = live.height(); screenX = live.left; screenY = live.top;
+            w = live.width(); h = live.height();
+            oxbInsetX = oxbLeftInset(tracked);
+            screenX = live.left + oxbInsetX; screenY = live.top;
         } else {
             w = tracked.getWidth(); h = tracked.getHeight();
             int[] s = new int[2];
-            tracked.getLocationOnScreen(s);
+            tracked.getLocationOnScreen(s);       // already true-screen on both axes
             screenX = s[0]; screenY = s[1];
         }
         // Decide MAXIMIZED from the SurfaceView's view bounds, which reliably go full-size when the
@@ -326,16 +336,25 @@ public final class LegacyMiniplayerDismissOverlay {
         if (live != null && !clampSuppressed && stable) {
             Rect vis = new Rect();
             tracked.getRootView().getWindowVisibleDisplayFrame(vis);
-            if (vis.width() >= w && vis.height() >= h) {
-                int nx = screenX, ny = screenY;
-                if (nx + w > vis.right) nx = vis.right - w;
-                if (ny + h > vis.bottom) ny = vis.bottom - h;
-                if (nx < vis.left) nx = vis.left;
-                if (ny < vis.top) ny = vis.top;
-                if (nx != screenX || ny != screenY) {
-                    LegacyMiniplayerNative.moveTo(new Rect(nx, ny, nx + w, ny + h)); // position only, same w/h
-                    screenX = nx; screenY = ny;
-                }
+            // HARD guarantee: the docked mini can never extend past the visible screen (too far right
+            // or down / off any edge). First CAP the size to the visible frame — this rescues a
+            // stuck-grown / oversized box (e.g. a swipe-up grow that ended without settling back);
+            // the old `vis.width() >= w` gate used to SKIP those and leave them off-screen. Then pull
+            // the box fully on-screen. Still gated on stable size (not mid-animation) and not during
+            // an intended off-screen drag/dismiss (clampSuppressed).
+            int bw = Math.min(w, vis.width());
+            int bh = Math.min(h, vis.height());
+            int nx = screenX, ny = screenY;
+            if (nx + bw > vis.right) nx = vis.right - bw;
+            if (ny + bh > vis.bottom) ny = vis.bottom - bh;
+            if (nx < vis.left) nx = vis.left;
+            if (ny < vis.top) ny = vis.top;
+            if (nx != screenX || ny != screenY || bw != w || bh != h) {
+                // nx/ny are TRUE screen (screenX was lifted by the left inset); oxb.u consumes oxb
+                // space whose X origin is that left inset (Y origin is the screen top), so subtract
+                // the inset from X only. vis is also true-screen, so the comparison is same-space.
+                LegacyMiniplayerNative.moveTo(new Rect(nx - oxbInsetX, ny, nx - oxbInsetX + bw, ny + bh));
+                screenX = nx; screenY = ny; w = bw; h = bh; // keep the glass sized to the capped box
             }
         }
 
@@ -367,6 +386,19 @@ public final class LegacyMiniplayerDismissOverlay {
             endFreezeView.setY(screenY - c[1]);
             if (endFreezeView.getVisibility() != View.VISIBLE) endFreezeView.setVisibility(View.VISIBLE);
         }
+    }
+
+    /**
+     * Force an immediate glass reposition. positionGlass is normally driven by the tracked
+     * SurfaceView's pre-draw, but our own oxb.u moves (grow / settle-snap-back) change the surface
+     * WITHOUT triggering a view redraw — so with playback paused the pre-draw never fires and the
+     * glass freezes at its last position while the video snaps back underneath it. Callers that move
+     * the video via oxb.u (the grow gesture) must call this so the glass tracks the new box.
+     */
+    public static void forceReposition() {
+        final View t = glassTracked;
+        final ViewGroup cr = glassContentRoot;
+        if (t != null && cr != null) positionGlass(t, cr);
     }
 
     /** Remove the glass overlay + listeners (call on dismiss/maximize/detach). */
@@ -412,6 +444,24 @@ public final class LegacyMiniplayerDismissOverlay {
             }
         }
         return null;
+    }
+
+    /**
+     * The window's LEFT system inset (nav bar + display cutout), in px — the amount oxb.i's X origin
+     * sits inward from the TRUE screen left: display cutout on the left in ROTATION_90, nav bar on the
+     * left in ROTATION_270, 0 in portrait. There is deliberately NO Y counterpart: oxb.i's Y origin is
+     * already the screen top (which is why portrait Y was always correct). Read live so it self-updates
+     * on rotation and gesture/3-button nav changes.
+     */
+    private static int oxbLeftInset(View v) {
+        try {
+            android.view.WindowInsets wi = v.getRootWindowInsets();
+            if (wi == null) return 0;
+            return wi.getInsets(android.view.WindowInsets.Type.systemBars()
+                    | android.view.WindowInsets.Type.displayCutout()).left;
+        } catch (Throwable t) {
+            return 0;
+        }
     }
 
     private static boolean liveFollowing;

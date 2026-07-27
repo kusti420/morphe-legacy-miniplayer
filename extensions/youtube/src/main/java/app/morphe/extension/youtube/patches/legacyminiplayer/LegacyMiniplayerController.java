@@ -88,8 +88,24 @@ public final class LegacyMiniplayerController {
             LegacyMiniplayerDismissOverlay.installGlass(
                     video != null ? video : root, density, 5f * density);
 
+            // Grow target = the largest 16:9 rect that FITS the screen (the maximized video size).
+            // Portrait is width-constrained (w x w/1.777); LANDSCAPE must be HEIGHT-constrained
+            // (h*1.777 x h). Using w/1.777 in landscape produced a rect taller than the screen
+            // (2400x1350 on a 2400x1080 display), so growing/maximizing toward it blew the video size
+            // up — the landscape swipe-up "size all messed up" bug.
+            // NOTE: this rect is in oxb-space (LegacyMiniplayerNative.moveTo/oxb.u consume oxb coords),
+            // so left/top stay 0 like the original — do NOT bake in a true-screen center offset here,
+            // that mixes coordinate spaces and pushed the grown video off-screen right in landscape.
             final android.util.DisplayMetrics dm = root.getResources().getDisplayMetrics();
-            final Rect fullRect = new Rect(0, 0, dm.widthPixels, Math.round(dm.widthPixels / 1.777f));
+            final int fullW, fullH;
+            if (dm.widthPixels >= dm.heightPixels) { // landscape -> fit height
+                fullH = dm.heightPixels;
+                fullW = Math.round(fullH * 1.777f);
+            } else {                                  // portrait -> fit width
+                fullW = dm.widthPixels;
+                fullH = Math.round(fullW / 1.777f);
+            }
+            final Rect fullRect = new Rect(0, 0, fullW, fullH);
             final Rect[] docked = new Rect[1];
 
             root.setOnTouchListener(new LegacyMiniplayerGestureHandler(root,
@@ -109,19 +125,19 @@ public final class LegacyMiniplayerController {
                         }
 
                         @Override public void onVerticalDrag(int dy) {
-                            // Grow the REAL player (SurfaceView resizes via oxb.u) as the finger
-                            // drags up — video keeps playing and it grows, like 14.x.
+                            // 14.x grow: the REAL video grows toward fullscreen as the finger drags up.
                             Rect d = docked[0];
                             if (d == null) return;
-                            // The grow rect legitimately reaches the top edge (toward fullscreen);
-                            // suppress the on-screen clamp so it can't fight the last frames of it.
                             LegacyMiniplayerDismissOverlay.setClampSuppressed(true);
                             float travel = d.top - fullRect.top;
                             if (travel <= 0) return;
-                            // Up-only: clamp to [0,1] so dragging back DOWN can't push the
-                            // miniplayer below its docked position (mirror of the left-only dismiss).
+                            // Up-only: clamp to [0,1] so dragging back DOWN can't push it below docked.
                             float p = Math.max(0f, Math.min(-dy / travel, 1f));
-                            LegacyMiniplayerNative.moveTo(lerp(d, fullRect, p));
+                            Rect grown = lerp(d, fullRect, p);
+                            LegacyMiniplayerNative.moveTo(grown);
+                            // oxb.u moved the surface but won't trigger the SurfaceView's pre-draw
+                            // (esp. paused), so force the glass to track the new box this frame.
+                            LegacyMiniplayerDismissOverlay.forceReposition();
                         }
 
                         @Override public void onDismiss(int dx, boolean fling) {
@@ -131,16 +147,28 @@ public final class LegacyMiniplayerController {
 
                         @Override public void onSettle(boolean wasVertical) {
                             if (wasVertical) {
+                                // Grow released under the maximize threshold -> snap the video back to
+                                // its exact docked rect.
                                 if (docked[0] != null) LegacyMiniplayerNative.moveTo(docked[0]);
-                                // Re-arm the clamp: if that docked rect is itself off-screen, the
-                                // next frame pulls it back on-screen.
                                 LegacyMiniplayerDismissOverlay.setClampSuppressed(false);
+                                // Snap the glass back onto the video NOW (oxb.u moved the surface with
+                                // no view redraw). Repeat over the next few frames to catch the final
+                                // settled oxb.i in case the restore lands a beat later.
+                                LegacyMiniplayerDismissOverlay.forceReposition();
+                                root.postDelayed(LegacyMiniplayerDismissOverlay::forceReposition, 50);
+                                root.postDelayed(LegacyMiniplayerDismissOverlay::forceReposition, 200);
                             } else {
                                 LegacyMiniplayerDismissOverlay.settle();
                             }
                         }
 
                         @Override public void onMaximize() {
+                            // Reset the real video to its docked rect BEFORE maximizing. A swipe-up
+                            // grows it via oxb.u to an intermediate rect; maximizing from that grown
+                            // (and, pre-fix, oversized) state left the maximized video the wrong size,
+                            // mainly in landscape. Maximizing from the known docked size is what YT's
+                            // own maximize transition expects.
+                            if (docked[0] != null) LegacyMiniplayerNative.moveTo(docked[0]);
                             LegacyMiniplayerDismissOverlay.removeGlass();
                             if (!LegacyMiniplayerNative.maximize()) trigger(expand);
                         }

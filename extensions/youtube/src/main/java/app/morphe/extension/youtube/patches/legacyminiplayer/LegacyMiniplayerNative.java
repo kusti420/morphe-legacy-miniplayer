@@ -31,6 +31,11 @@ public final class LegacyMiniplayerNative {
     @Nullable private static Method oxbMoveTo;    // oxb.u(Rect)
     @Nullable private static Method owvMaximize;  // owv.f() -> pom.p()
     private static boolean resolved;
+    // Latched once the obfuscated names are confirmed MISSING (e.g. a future YouTube build renamed
+    // owv.b / oxb.i / oxb.u): without this, positionGlass's per-frame getLiveRect() would retry the
+    // reflection AND log an exception every frame — steady jank + logcat spam. Reset in setOwv so a
+    // freshly captured owv (possibly a compatible build) is retried.
+    private static boolean resolveFailed;
 
     private LegacyMiniplayerNative() {}
 
@@ -38,13 +43,15 @@ public final class LegacyMiniplayerNative {
     public static void setOwv(Object owv) {
         owvRef = new WeakReference<>(owv);
         resolved = false;
+        resolveFailed = false;
         oxb = null;
     }
 
     private static boolean ensureResolved() {
         if (resolved) return true;
+        if (resolveFailed) return false; // unsupported YT build — don't retry reflection every frame
         Object owv = owvRef != null ? owvRef.get() : null;
-        if (owv == null) return false;
+        if (owv == null) return false; // not captured yet (or oxb not set) — keep trying, not a failure
         try {
             Field bField = owv.getClass().getDeclaredField("b");
             bField.setAccessible(true);
@@ -65,7 +72,8 @@ public final class LegacyMiniplayerNative {
             Logger.printDebug(() -> "Legacy native bridge resolved oxb=" + oxb.getClass().getName());
             return true;
         } catch (Throwable t) {
-            Logger.printException(() -> "Legacy miniplayer native resolve failure", t);
+            resolveFailed = true; // genuine name mismatch (owv present but a field/method is gone)
+            Logger.printException(() -> "Legacy miniplayer native resolve failure (native move disabled)", t);
             return false;
         }
     }
